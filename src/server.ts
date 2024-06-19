@@ -1,356 +1,317 @@
 import { v4 as uuidv4 } from 'uuid';
-import {  Server, StableBTreeMap, ic } from 'azle';
 import express, { Request, Response } from 'express';
+import mongoose from 'mongoose';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
+import { Schema, model } from 'mongoose';
 
-interface Book {
-    BookId: string;
-    Title: string;
-    Description : string;
-    Author: string;
-    Price: number;
-    status: string;
-    createdAt: Date;
-    updatedAt?:Date     
-}
+const app = express();
+app.use(express.json());
 
-interface Box {
-     BoxId: string;
-     BoxName: string;
-     Store: string[];
-     createdAt: Date;
-     updatedAt?:Date  
-}
+// MongoDB Schemas and Models
+const boxSchema = new Schema({
+    BoxId: { type: String, required: true, unique: true },
+    BoxName: { type: String, required: true },
+    Store: { type: [String], default: [] },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date }
+});
 
-const BoxStorage = StableBTreeMap<string, Box>(0)
-const BookStorage = StableBTreeMap<string,Book>(1)
+const bookSchema = new Schema({
+    BookId: { type: String, required: true, unique: true },
+    Title: { type: String, required: true },
+    Description: { type: String, required: true },
+    Author: { type: String, required: true },
+    Price: { type: Number, required: true },
+    status: { type: String, default: "Unstored" },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date }
+});
 
-export default Server(()=>{
- const app = express();
- app.use(express.json);
+const Box = model('Box', boxSchema);
+const Book = model('Book', bookSchema);
 
+// MongoDB connection
+mongoose.connect('mongodb://localhost:27017/boxbook', {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+});
 
- //Create a box 
-app.post('/Box',(req: Request, res: Response)=>{
+// Middleware for JWT authentication
+const authenticateJWT = (req: Request, res: Response, next: Function) => {
+    const token = req.header('Authorization')?.split(' ')[1];
+    if (!token) return res.status(401).json({ status: 401, error: "Unauthorized" });
+
+    jwt.verify(token, 'your_jwt_secret', (err: any, user: any) => {
+        if (err) return res.status(403).json({ status: 403, error: "Forbidden" });
+        req.user = user;
+        next();
+    });
+};
+// Create a box
+app.post('/Box', authenticateJWT, async (req: Request, res: Response) => {
     const { BoxName } = req.body;
-    try{
-      
-        const NewBox: Box ={
+    try {
+        const newBox = new Box({
             BoxId: uuidv4(),
-            BoxName,
-            Store: [],
-            createdAt: getCurrentDate()
-        } 
-        BoxStorage.insert(NewBox.BoxId,NewBox)
-        return res.status(201).json({status: 201, NewBox})
-    }catch(error:any){
-        return res.status(500).json({status: 500, error: error.message})
+            BoxName
+        });
+        await newBox.save();
+        return res.status(201).json({ status: 201, newBox });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
     }
-})
+});
 
-//Get all box
-app.get('/Box',(req:Request, res:Response)=>{
-    try{
-        const AllBox = BoxStorage.values();
-        return res.status(200).json({status: 200, AllBox})
-    }catch(error: any){
-        return res.status(500).json({status: 500, error: error.message})
-    }  
-})
+// Get all boxes
+app.get('/Box', authenticateJWT, async (req: Request, res: Response) => {
+    try {
+        const allBoxes = await Box.find();
+        return res.status(200).json({ status: 200, allBoxes });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
+    }
+});
 
-// updating box
-app.put('/Box/:id',(req:Request,res:Response)=>{
-    try{
-        const id = req.params.id;
+// Update a box
+app.put('/Box/:id', authenticateJWT, async (req: Request, res: Response) => {
+    try {
         const { BoxName } = req.body;
-        const BoxExist = BoxStorage.get(id);
-      if('None' in BoxExist){
-        return res.status(404).json({status:404, error:"Box Does not exist"})
-      }else {
-        const updatedBox:Box= {
-            ...BoxExist.Some,
-            BoxName, 
-            updatedAt: getCurrentDate()
-       }
-
-        BoxStorage.insert(BoxExist.Some.BoxId,updatedBox);
-        return res.status(200).json({status: 200, message: "updated successful"})
-      }
-      
-         
-    }catch(error:any){
-        return res.status(500).json({status: 500, error: error.message})
+        const box = await Box.findOneAndUpdate(
+            { BoxId: req.params.id },
+            { BoxName, updatedAt: new Date() },
+            { new: true }
+        );
+        if (!box) return res.status(404).json({ status: 404, error: "Box does not exist" });
+        return res.status(200).json({ status: 200, message: "Updated successfully", box });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
     }
-   
-})
+});
 
-// get one box 
-app.get('/Box/:id', (req:Request, res:Response)=>{
-   try{
-        const id = req.params.id;
-        const BoxExist = BoxStorage.get(id);
-        
-        if('None' in BoxExist){
-        return res.status(404).json({status:404, error:"Box Does not exist"})
-        }else {
-            const Box = BoxExist.Some
-            return res.status(200).json({status:200, Box})
+// Get one box
+app.get('/Box/:id', authenticateJWT, async (req: Request, res: Response) => {
+    try {
+        const box = await Box.findOne({ BoxId: req.params.id });
+        if (!box) return res.status(404).json({ status: 404, error: "Box does not exist" });
+        return res.status(200).json({ status: 200, box });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
+    }
+});
+
+// Delete a box
+app.delete('/Box/:id', authenticateJWT, async (req: Request, res: Response) => {
+    try {
+        const box = await Box.findOne({ BoxId: req.params.id });
+        if (!box) return res.status(404).json({ status: 404, error: "Box does not exist" });
+        if (box.Store.length > 0) {
+            return res.status(400).json({ status: 400, error: "Please empty your box before you delete" });
         }
-   }catch(error:any){
-    return res.status(500).json({status: 500, error: error.message})
-   }
-})
-
-// delete  box
-app.delete('/Box/:id',(req:Request,res:Response)=>{
-  try{
-    const id = req.params.id;
-  const BoxExist = BoxStorage.get(id);
-  if('None' in BoxExist){
-    return res.status(400).json({status: 404, error: "Box does not exist"})
-  }else if(BoxExist.Some.Store.length > 0){
-    return res.status(400).json({status:404, error:"Please empty your box before you delete"})
-  }else{
-    const deletedBox = BoxStorage.remove(id);
-    if('None' in deletedBox){
-     return res.status(400).json({status: 400, error: `We couldn't delete box with id=${id}`})
-    }else{
-        return res.status(200).json({status:200,message:"Box deleted successfully"})
+        await box.remove();
+        return res.status(200).json({ status: 200, message: "Box deleted successfully" });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
     }
-  }  
+});
+// Create and add a book to a box
+app.post('/Box/:id/Book', authenticateJWT, async (req: Request, res: Response) => {
+    try {
+        const { Title, Description, Author, Price } = req.body;
+        const box = await Box.findOne({ BoxId: req.params.id });
+        if (!box) return res.status(404).json({ status: 404, error: "Box does not exist" });
 
-  }catch(error:any){
-    return res.status(500).json({status: 500, error: error.message})
-  }
-  
-})
+        if (box.Store.length >= 5) {
+            return res.status(400).json({ status: 400, error: "Box is full. Please find another box or create one" });
+        }
 
-// Create and Add  book in store
-app.post('/Box/:id/Book',(req:Request, res:Response)=>{
-   try{ 
-    const boxid = req.params.id;
-    const { 
-        Title,
-        Description,
-        Author,
-        Price, 
-    } = req.body;
-    const BoxExist = BoxStorage.get(boxid);
-    if('None' in BoxExist){
-      return res.status(400).json({status: 404, error: "Box does not exist"})
+        const newBook = new Book({
+            BookId: uuidv4(),
+            Title,
+            Description,
+            Author,
+            Price,
+            status: "Stored"
+        });
+
+        await newBook.save();
+        box.Store.push(newBook.BookId);
+        box.updatedAt = new Date();
+        await box.save();
+
+        return res.status(201).json({ status: 201, message: "Book created and stored successfully", newBook });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
     }
+});
 
-    if(BoxExist.Some.Store.length === 5){
-        return res.status(400).json({status: 404, error: "Box is full please find other box or create one"})
+// Remove a book from a box
+app.put('/Box/removeBook/:Bxid/Book/:Bkid', authenticateJWT, async (req: Request, res: Response) => {
+    try {
+        const box = await Box.findOne({ BoxId: req.params.Bxid });
+        const book = await Book.findOne({ BookId: req.params.Bkid });
+
+        if (!book) return res.status(400).json({ status: 400, error: "Book does not exist" });
+        if (!box) return res.status(400).json({ status: 400, error: "Box does not exist" });
+        if (!box.Store.includes(book.BookId)) {
+            return res.status(400).json({ status: 400, error: `Book with id=${book.BookId} is not stored in Box id=${box.BoxId}` });
+        }
+
+        box.Store = box.Store.filter((id) => id !== book.BookId);
+        box.updatedAt = new Date();
+        await box.save();
+
+        book.status = "Unstored";
+        book.updatedAt = new Date();
+        await book.save();
+
+        return res.status(200).json({ status: 200, message: "Book removed from store successfully" });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
     }
-   const NewBook: Book= {
-       BookId: uuidv4(),
-       Title,
-       Description,
-       Author,
-       Price,
-       status: "Stored",
-       createdAt: getCurrentDate()
-   }
+});
 
-   BookStorage.insert(NewBook.BookId,NewBook);
-   BoxExist.Some.Store.push(NewBook.BookId)
-   const updatedBox = {
-    ...BoxExist.Some,
-   }
-   BoxStorage.insert(BoxExist.Some.BoxId,updatedBox)
-   return res.status(201).json({status:201,message:"Box Created and stored successfully"})
+// Add an existing book to a box
+app.put('/Box/addBook/:Bxid/Book/:Bkid', authenticateJWT, async (req: Request, res: Response) => {
+    try {
+        const box = await Box.findOne({ BoxId: req.params.Bxid });
+        const book = await Book.findOne({ BookId: req.params.Bkid });
 
-   }catch(error: any){
-    return res.status(500).json({status: 500, error: error.message})
-   }
-}
-)
-// Remove exist book in  box
-app.put('/Box/removeBook/:Bxid/Book/:Bkid', (req:Request, res:Response)=>{
-   
-  try{
-    const boxId = req.params.Bxid;
-    const bookId = req.params.Bkid;
-    const BoxExist = BoxStorage.get(boxId);
-    const BookExist = BookStorage.get(bookId)
- 
-    if('None' in BookExist){
-     return res.status(400).json({status: 400, error: "Book does not exist"})
+        if (!book) return res.status(400).json({ status: 400, error: "Book does not exist" });
+        if (!box) return res.status(400).json({ status: 400, error: "Box does not exist" });
+
+        if (box.Store.includes(book.BookId)) {
+            return res.status(400).json({ status: 400, error: `Book with id=${book.BookId} already stored in Box id=${box.BoxId}` });
+        }
+        if (book.status === "Stored") {
+            return res.status(400).json({ status: 400, error: `Book with id=${book.BookId} is already stored in another box` });
+        }
+        if (box.Store.length >= 5) {
+            return res.status(400).json({ status: 400, error: "Box is full. Please find another box or create one" });
+        }
+
+        box.Store.push(book.BookId);
+        box.updatedAt = new Date();
+        await box.save();
+
+        book.status = "Stored";
+        book.updatedAt = new Date();
+        await book.save();
+
+        return res.status(200).json({ status: 200, message: "Book added to box successfully" });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
     }
- 
-    if('None' in BoxExist){
-      return res.status(400).json({status: 400, error: "Box does not exist"})
+});
+// Get all books
+app.get('/Book', authenticateJWT, async (req: Request, res: Response) => {
+    try {
+        const allBooks = await Book.find();
+        return res.status(200).json({ status: 200, allBooks });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
     }
- 
-    if(!BoxExist.Some.Store.includes(bookId)){
-     return res.status(400).json({status: 400, error: `Book with id=${bookId} is not stored in Box id=${boxId}`})
+});
+
+// Get a single book by ID
+app.get('/Book/:id', authenticateJWT, async (req: Request, res: Response) => {
+    try {
+        const book = await Book.findOne({ BookId: req.params.id });
+        if (!book) return res.status(404).json({ status: 404, error: "Book does not exist" });
+        return res.status(200).json({ status: 200, book });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
     }
-    const NewStore = BoxExist.Some.Store.filter((item)=>item !=bookId)
-    
-    const updatedBox:Box={
-     ...BoxExist.Some, Store:NewStore,updatedAt: getCurrentDate()
+});
+
+// Search for a book across boxes
+app.get('/Book/search/:id', authenticateJWT, async (req: Request, res: Response) => {
+    try {
+        const bookId = req.params.id;
+        const boxes = await Box.find({ Store: bookId });
+
+        if (boxes.length === 0) {
+            return res.status(404).json({ status: 404, error: "Book not found in any box" });
+        }
+
+        return res.status(200).json({ status: 200, message: "Book found in boxes", boxes });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
     }
- 
-    BoxStorage.insert(boxId, updatedBox);
-    const updatedBook={
-      ...BookExist.Some,status: "Unstored", updatedAt:getCurrentDate()
+});
+
+// Delete a book by ID
+app.delete('/Book/:id', authenticateJWT, async (req: Request, res: Response) => {
+    try {
+        const book = await Book.findOne({ BookId: req.params.id });
+        if (!book) return res.status(404).json({ status: 404, error: "Book does not exist" });
+
+        if (book.status === "Stored") {
+            const boxes = await Box.find({ Store: book.BookId });
+            for (const box of boxes) {
+                box.Store = box.Store.filter((id) => id !== book.BookId);
+                box.updatedAt = new Date();
+                await box.save();
+            }
+        }
+
+        await book.remove();
+        return res.status(200).json({ status: 200, message: "Book deleted successfully" });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
     }
- 
-    BookStorage.insert(bookId,updatedBook)
- 
-    return res.status(200).json({status:200, message:"Book removed from store successfully"})
+});
+const userSchema = new Schema({
+    username: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    role: { type: String, required: true, enum: ['user', 'admin'] }
+});
 
-  }catch(error: any){
-    return res.status(500).json({status: 500, error: error.message})
-  }
-})
-// add existing book in store
-app.put('/Box/addBook/:Bxid/Book/:Bkid',(req:Request,res:Response)=>{
-  
-    try{
-      const boxId = req.params.Bxid;
-      const bookId = req.params.Bkid;
-      const BoxExist = BoxStorage.get(boxId);
-      const BookExist = BookStorage.get(bookId)
-   
-      if('None' in BookExist){
-       return res.status(400).json({status: 400, error: "Book does not exist"})
-      }
-      if('None' in BoxExist){
-        return res.status(400).json({status: 400, error: "Box does not exist"})
-      }
-  
-      if(BoxExist.Some.Store.includes(bookId)){
-          return res.status(400).json({status: 400, error: `Book with id=${bookId} already stored in Box id=${boxId}`})
-      }
-      if(BookExist.Some.status==="Stored"){
-          return res.status(400).json({status: 400,error:"Book is stored in this or other box"})
-      }
-      const updatedBook: Book= {
-           ...BookExist.Some,status: "stored",
-          updatedAt: getCurrentDate()
-      }
-   
-      BookStorage.insert(updatedBook.BookId,updatedBook);
-      BoxExist.Some.Store.push(updatedBook.BookId)
-      const updatedBox = {
-       ...BoxExist.Some,
-      }
-      BoxStorage.insert(BoxExist.Some.BoxId,updatedBox)
-  
-      return res.status(200).json({status:200, message:"Book added successfully"})
-    }catch(error:any){
-        return res.status(500).json({status: 500, error: error.message})
+const User = model('User', userSchema);
+
+// Register a new user
+app.post('/register', async (req: Request, res: Response) => {
+    const { username, password, role } = req.body;
+
+    try {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const newUser = new User({ username, password: hashedPassword, role });
+        await newUser.save();
+        return res.status(201).json({ status: 201, message: "User registered successfully" });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
     }
-})
+});
 
-// GET all book
-app.get('/Book',(req:Request,res:Response)=>{
-  try{
-    const AllBox = BookStorage.values();
-    return res.status(200).json({status:200, AllBox})  
-}catch(error:any){
-    return res.status(500).json({status: 500, error: error.message})
-  }
-})
+// User login
+app.post('/login', async (req: Request, res: Response) => {
+    const { username, password } = req.body;
 
+    try {
+        const user = await User.findOne({ username });
+        if (!user) return res.status(404).json({ status: 404, error: "User not found" });
 
-// get one book
-app.get('/Book/:id',(req:Request,res:Response)=>{
-  try{
-    const bookId= req.params.id;
-    const BookExist = BookStorage.get(bookId);
+        const match = await bcrypt.compare(password, user.password);
+        if (!match) return res.status(401).json({ status: 401, error: "Invalid credentials" });
 
-    if('None' in BookExist){
-     return res.status(400).json({status: 400, error: "Book does not exist"})
+        const token = jwt.sign({ username: user.username, role: user.role }, 'your_jwt_secret', { expiresIn: '1h' });
+        return res.status(200).json({ status: 200, token });
+    } catch (error: any) {
+        return res.status(500).json({ status: 500, error: error.message });
     }
-    
-    return res.status(200).json({status: 200, Book:BookExist.Some })
-  }catch(error:any){
-    return res.status(500).json({status: 500, error: error.message})
-  }
-})
-// Delete exist book 
-app.delete('/Book/:id',(req:Request,res:Response)=>{
-    try{
-        const bookId= req.params.id;
-       const BookExist = BookStorage.get(bookId);
+});
+// MongoDB Indexing for faster search
+boxSchema.index({ 'Store': 1 });
+bookSchema.index({ 'BookId': 1 });
 
-    if('None' in BookExist){
-     return res.status(400).json({status: 400, error: "Book does not exist"})
-    }
+// Centralized Error Handling Middleware
+app.use((err: any, req: Request, res: Response, next: Function) => {
+    console.error(err.stack);
+    res.status(500).json({ status: 500, error: "Something went wrong!" });
+});
 
-    if(BookExist.Some.status ==="stored"){
-      return res.status(400).json({status:400, error:"Please remove the book in box to delete it"})
-    }
-    
-    BookStorage.remove(bookId)
-    return res.status(200).json({status:200, message:"deleted Successfully"})
-   
-    }catch(error: any){
-      return res.status(500).json({status: 500, error: error.message})
-    }
-})
-// edit exist book
-app.put('/Book/:id',(req:Request,res:Response)=>{
-    try{
-        const bookId= req.params.id;
-       const BookExist = BookStorage.get(bookId);
-
-      if('None' in BookExist){
-     return res.status(400).json({status: 400, error: "Book does not exist"})
-     }
-     const updatedBook:Book ={
-        ...BookExist.Some,
-        ...req.body, updatedAt: getCurrentDate()
-     }
-    
-    BookStorage.insert(bookId,updatedBook)
-    return res.status(200).json({status:200, message:"updated Successfully"})
-   
-    }catch(error: any){
-        return res.status(500).json({status: 500, error: error.message})
-    }
-})
-// search the book in the box
-app.post("/Book/search/:id",(req:Request,res:Response)=>{
-   try{
-    const bookId= req.params.id;
-    const bookExist = BookStorage.get(bookId);
- 
-    if("None" in bookExist){
-     return res.status(401).json({status:401, error:"this book does not exist"})
-    }
- 
-    if(bookExist.Some.status === "unstored"){
-     return res.status(401).json({status:401, error:"This book seem not be stored in box"});
-    }
- 
-    const allBox = BoxStorage.values();
-    for(let i=0; i < allBox.length;i++){
-     if(allBox[i].Store.includes(bookId)){
-       return res.status(200).json({status: 200,message: `The book with id=${bookId} is stored in box with id=${allBox[i].BoxId}`})
-     }
- 
-     return res.status(401).json({status: 401, error: "sorry please we couldn't find this book in any store"})
-    }
-   }catch(error:any){
-    return res.status(500).json({status: 500, error: error.message})
-   }
-
-})
-
-
-const PORT = 4000
-return app.listen(PORT,()=>{
-    console.log(`Server is running on port ${PORT}`)
-})
-
-})
-
-
-const getCurrentDate=()=>{
-    const timestamp = new Number(ic.time());
-    return new Date(timestamp.valueOf() / 1000_000);
-}
-
+// Start the server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
