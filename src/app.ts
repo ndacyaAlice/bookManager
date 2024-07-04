@@ -26,7 +26,7 @@ const BookStorage = StableBTreeMap<string,Book>(1)
 
 export default Server(()=>{
  const app = express();
- app.use(express.json);
+ app.use(express.json());
 
 
  //Create a box 
@@ -332,7 +332,7 @@ app.post("/Book/search/:id",(req:Request,res:Response)=>{
        return res.status(200).json({status: 200,message: `The book with id=${bookId} is stored in box with id=${allBox[i].BoxId}`})
      }
  
-     return res.status(401).json({status: 401, error: "sorry please we couldn't find this book in any store"})
+     return res.status(404).json({status: 404, error: "sorry please we couldn't find this book in any store"})
     }
    }catch(error:any){
     return res.status(500).json({status: 500, error: error.message})

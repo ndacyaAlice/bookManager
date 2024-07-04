@@ -15,6 +15,7 @@ BookManager is designed to help users organize their books efficiently. It provi
   - install dependencies using `npm install`
   - Run the project using `dfx start --host 127.0.0.1:8000 --clean --background`
   - deploy locally `dfx deploy
+    
   
   `
 
