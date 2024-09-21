@@ -20,7 +20,9 @@ interface Box {
      createdAt: Date;
      updatedAt?:Date  
 }
-
+interface Box  {
+  hello: string
+}
 const BoxStorage = StableBTreeMap<string, Box>(0)
 const BookStorage = StableBTreeMap<string,Book>(1)
 
